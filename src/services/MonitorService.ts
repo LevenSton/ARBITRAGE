@@ -35,6 +35,7 @@ export class MonitorService {
     this.provider.on('pending', async (txHash) => {
       try {
         const tx = await this.provider.getTransaction(txHash);
+        logger.info(`目标地址是: `, tx.to);
         if (!tx || tx.to !== process.env.BONDING_CONTRACT) return;
 
         const receipt = await tx.wait();
@@ -99,7 +100,7 @@ export class MonitorService {
     setInterval(async () => {
       try {
         const boughtTransactions = await transactionDB.getAllBoughtTransactions();
-        console.log(`监控到 ${boughtTransactions.length} 条交易记录`);
+        logger.info(`监控到 ${boughtTransactions.length} 条交易记录`);
 
         for (const tx of boughtTransactions) {
           const selledVirtualAmount = await this.routerContract.getAmountsOut(tx.purchasedToken, ZERO_ADDRESS);
