@@ -71,6 +71,19 @@ class TransactionDB {
     }
   }
 
+  async getAllTransactions(): Promise<Transaction[]> {
+    const transactions: Transaction[] = [];
+    try {
+      for await (const [_, value] of this.db.iterator()) {
+        transactions.push(value);
+      }
+    } catch (error) {
+      logger.error('获取所有交易记录时出错:', error);
+      throw error;
+    }
+    return transactions;
+  }
+
   async getAllBoughtTransactions(): Promise<Transaction[]> {
     const transactions: Transaction[] = [];
     
