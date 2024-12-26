@@ -59,6 +59,7 @@ export class MonitorService {
   private async handleLaunchedEvent(args: any) {
     const tokenAddress = args.token;
     const pairAddress = args.pair;
+    logger.info(`检测到新的token发射: ${tokenAddress} -> ${pairAddress}`);
 
     try {
       // 执行买入操作
@@ -68,6 +69,11 @@ export class MonitorService {
       this.id ++; 
       // const tx = await this.targetContract.buy(buyAmount, tokenAddress);
       // const receipt = await tx.wait();
+      logger.info(`=====买入代币 ${tokenAddress} ======
+        支付Virtual: ${ethers.utils.formatEther(buyAmount.toString())}, 
+        获得Token数量: ${ethers.utils.formatEther(outAmount.toString())}
+        \n ======================================
+      `);
 
       // 记录交易到数据库
       const transaction: Transaction = {
@@ -89,9 +95,11 @@ export class MonitorService {
   }
 
   private async startPriceMonitoring() {
+    logger.info('======开始价格监控======');
     setInterval(async () => {
       try {
         const boughtTransactions = await transactionDB.getAllBoughtTransactions();
+        console.log(`监控到 ${boughtTransactions.length} 条交易记录`);
 
         for (const tx of boughtTransactions) {
           const selledVirtualAmount = await this.routerContract.getAmountsOut(tx.purchasedToken, ZERO_ADDRESS);
@@ -109,10 +117,15 @@ export class MonitorService {
 
   private async sellToken(tx: Transaction, expectSelledVirtualAmount: ethers.BigNumber) {
     try {
-      
       // const tx = await this.targetContract.buy(buyAmount, tokenAddress);
       // const receipt = await tx.wait();
 
+      logger.info(`====卖出代币 ${tx.tokenAddress} ==== 
+        获得Virtual: ${ethers.utils.formatEther(expectSelledVirtualAmount.toString())}, 
+        购买付出: ${ethers.utils.formatEther(tx.buyCostVirtualAmount.toString())},
+        利润为: ${ethers.utils.formatEther(expectSelledVirtualAmount.sub(ethers.utils.parseUnits(tx.buyCostVirtualAmount, 18)).toString())}
+        \n ======================================
+      `);
       // 更新交易记录
       const updates: Partial<Transaction> = {
         sellTime: new Date().toISOString(),
