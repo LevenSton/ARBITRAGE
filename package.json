@@ -4,14 +4,14 @@
   "description": "Base链交易监听与自动交易系统",
   "main": "dist/index.ts",
   "scripts": {
-    "start": "NODE_ENV=production ts-node src/index.ts",
-    "dev": "NODE_ENV=development ts-node-dev --respawn src/index.ts",
-    "build": "tsc"
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn src/index.ts"
   },
   "dependencies": {
+    "dotenv": "^16.3.1",
     "ethers": "^5.7.2",
     "level": "^8.0.0",
-    "dotenv": "^16.3.1",
     "winston": "^3.11.0"
   },
   "devDependencies": {
