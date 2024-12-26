@@ -188,3 +188,18 @@ export function formatTimestamp(timestamp: string): string {
     timeZone: 'Asia/Shanghai'
   });
 }
+
+async function main() {
+  try {
+    const txs = await getAllTransactions();
+    logger.info('所有交易记录:', { transactions: txs });
+  } catch (error) {
+    logger.error('获取交易记录时出错:', error);
+    process.exit(1);
+  }
+}
+
+main().catch(error => {
+  logger.error('执行统计程序时出错:', error);
+  process.exit(1);
+});

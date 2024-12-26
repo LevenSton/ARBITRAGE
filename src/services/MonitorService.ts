@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { BONDING_CONTRACT_ABI, ROUTER_CONTRACT_ABI, ZERO_ADDRESS } from '../contracts/interfaces';
+import { BONDING_CONTRACT_ABI, ROUTER_CONTRACT_ABI, VIRTUAL_TOKEN_ADDRESS, ZERO_ADDRESS } from '../contracts/interfaces';
 import { transactionDB, Transaction } from '../db/TransactionDB';
 import { logger } from '../utils/logger';
 
@@ -39,7 +39,7 @@ export class MonitorService {
         this.retryCount = 0;
         return true;
     } catch (error) {
-        console.error('Initialization failed:', error);
+        logger.error('初始化失败:', error);
         return false;
     }
 }
@@ -62,7 +62,7 @@ export class MonitorService {
     });
 
     this.provider!.on('error', async (error) => {
-      console.error('Provider error:', error);
+      logger.error('Provider 连接错误:', error);
       await this.handleDisconnection();
     });
 
@@ -74,12 +74,12 @@ export class MonitorService {
     if (!this.isListening) return;
 
     if (this.retryCount >= this.maxRetries) {
-        console.error('Max retry attempts reached. Please check your connection.');
+        logger.error('达到最大重试次数。请检查您的连接。');
         this.isListening = false;
         return;
     }
 
-    console.log(`Attempting to reconnect... (Attempt ${this.retryCount + 1}/${this.maxRetries})`);
+    logger.info(`尝试重新连接... (第 ${this.retryCount + 1}/${this.maxRetries} 次)`);
     
     // 移除所有现有的监听器
     this.targetContract?.removeAllListeners('Launched');
@@ -105,8 +105,8 @@ export class MonitorService {
 
     try {
       // 执行买入操作
-      const buyAmount = ethers.utils.parseEther('0.1'); // 设置买入金额
-      const outAmount = await this.routerContract!.getAmountsOut(tokenAddress, ZERO_ADDRESS, buyAmount);
+      const buyAmount = ethers.utils.parseEther('5'); // 设置买入金额
+      const outAmount = await this.routerContract!.getAmountsOut(tokenAddress, VIRTUAL_TOKEN_ADDRESS, buyAmount);
       this.id ++; 
       // const tx = await this.targetContract.buy(buyAmount, tokenAddress);
       // const receipt = await tx.wait();
@@ -139,12 +139,12 @@ export class MonitorService {
     setInterval(async () => {
       try {
         const boughtTransactions = await transactionDB.getAllBoughtTransactions();
-        console.log(`监控到 ${boughtTransactions.length} 条交易记录`);
+        logger.info(`监控到 ${boughtTransactions.length} 条交易记录`);
 
         for (const tx of boughtTransactions) {
-          const selledVirtualAmount = await this.routerContract!.getAmountsOut(tx.purchasedToken, ZERO_ADDRESS);
+          const selledVirtualAmount = await this.routerContract!.getAmountsOut(tx.tokenAddress, ZERO_ADDRESS, tx.purchasedToken);
           const buyAmount = ethers.BigNumber.from(tx.buyCostVirtualAmount);
-          
+
           if (selledVirtualAmount.mul(2).gt(buyAmount)) {
             await this.sellToken(tx, selledVirtualAmount);
           }
@@ -160,11 +160,11 @@ export class MonitorService {
       // const tx = await this.targetContract.buy(buyAmount, tokenAddress);
       // const receipt = await tx.wait();
 
-      logger.info(`====卖出代币 ${tx.tokenAddress} ==== 
-        获得Virtual: ${ethers.utils.formatEther(expectSelledVirtualAmount.toString())}, 
-        购买付出: ${ethers.utils.formatEther(tx.buyCostVirtualAmount)},
+      logger.info(`\n====卖出代币 ${tx.tokenAddress} ==== \n
+        获得Virtual: ${ethers.utils.formatEther(expectSelledVirtualAmount.toString())}, \n
+        购买付出: ${ethers.utils.formatEther(tx.buyCostVirtualAmount)}, \n
         利润为: ${ethers.utils.formatEther(expectSelledVirtualAmount.sub(ethers.BigNumber.from(tx.buyCostVirtualAmount)).toString())}
-        \n ======================================
+        \n ======================================\n
       `);
 
       // 更新交易记录
@@ -190,6 +190,6 @@ export class MonitorService {
       this.provider.removeAllListeners('error');
     }
     this.isListening = false;
-    console.log('Stopped listening for events');
+    logger.info('已停止监听事件');
   }
 }
