@@ -10,6 +10,7 @@ export class MonitorService {
     private routerContract: ethers.Contract;
     private virtualArbitrageContract: ethers.Contract;
     private blockNumber: number = 0;
+    private onSell: boolean = false;
 
     constructor() {
       try {
@@ -146,6 +147,10 @@ export class MonitorService {
 
   private async sellToken(tx: Transaction, expectSelledVirtualAmount: ethers.BigNumberish) {
     try {
+      if(this.onSell) return logger.info('已经在卖出中,请不要重复操作');
+      
+      this.onSell = true;
+      // 执行卖出操作
       const res = await this.virtualArbitrageContract.sellOnVirtual(tx.tokenAddress, tx.purchasedToken, expectSelledVirtualAmount, {
         gasLimit: 800000,
         maxFeePerGas: ethers.parseUnits("0.03", "gwei"),
@@ -155,6 +160,7 @@ export class MonitorService {
       if(receipt.status === 1) {
         logger.info(`卖出代币 ${tx.tokenAddress} 预期获得Virtual: ${ethers.formatEther(expectSelledVirtualAmount)}, 预期利润为: ${ethers.formatEther(`${BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)}`)}`);
         // 更新交易记录
+        this.onSell = false;
         const updates: Partial<Transaction> = {
           sellHash: res.hash,
           sellTime: new Date().toISOString(),
@@ -166,6 +172,7 @@ export class MonitorService {
         logger.info(`成功卖出代币 ${tx.tokenAddress}`);
       }
     } catch (error) {
+      this.onSell = false;
       this.reconnectHttpProvider();
       logger.error(`卖出代币 ${tx.tokenAddress} 时出错:`, error);
     }
