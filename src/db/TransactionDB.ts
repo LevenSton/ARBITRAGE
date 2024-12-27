@@ -11,6 +11,7 @@ export interface Transaction {
   buyCostVirtualAmount: string;
   buyTime: string;
   purchasedToken: string;
+  sellHash?: string;
   sellTime?: string;
   soldVirtualAmount?: string;
   profit?: string;

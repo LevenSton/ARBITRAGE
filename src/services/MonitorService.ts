@@ -5,7 +5,6 @@ import { logger } from '../utils/logger';
 
 export class MonitorService {
     private httpProvider: ethers.JsonRpcProvider;
-    private id: number = 0;
     private wallet: ethers.Wallet;
     private bondingContract: ethers.Contract;
     private routerContract: ethers.Contract;
@@ -80,8 +79,6 @@ export class MonitorService {
     logger.info(`检测到新的token发射: ${tokenAddress} -> ${pairAddress}`);
     try {
       // 执行买入操作
-      //const outAmount = await this.routerContract!.getAmountsOut(tokenAddress, VIRTUAL_TOKEN_ADDRESS, buyAmount);
-      this.id ++; 
       const tx = await this.bondingContract.buy(ethers.parseEther('5'), tokenAddress);
       const receipt = await tx.wait();
       if(receipt.status === 1) {
@@ -90,7 +87,7 @@ export class MonitorService {
         logger.info(`买入代币 ${tokenAddress} 支付Virtual: ${ethers.formatEther(ethers.parseEther('5').toString())}, 获得Token: ${ethers.formatEther(balance.toString())}`);
         // 记录交易到数据库
         const transaction: Transaction = {
-          transactionHash: this.id.toString(),
+          transactionHash: tx.hash,
           tokenAddress,
           pairAddress,
           buyCostVirtualAmount: ethers.parseEther('5').toString(),
@@ -135,6 +132,7 @@ export class MonitorService {
         logger.info(`卖出代币 ${tx.tokenAddress} 预期获得Virtual: ${ethers.formatEther(expectSelledVirtualAmount)}, 预期利润为: ${ethers.formatEther(`${BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)}`)}`);
         // 更新交易记录
         const updates: Partial<Transaction> = {
+          sellHash: res.hash,
           sellTime: new Date().toISOString(),
           soldVirtualAmount: expectSelledVirtualAmount.toString(),
           profit: (BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)).toString(),
