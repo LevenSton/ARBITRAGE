@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { BONDING_CONTRACT_ABI, BONDING_CONTRACT_ADDRESS, ERC20_ABI, ROUTER_CONTRACT_ABI, ROUTER_CONTRACT_ADDRESS, VIRTUAL_TOKEN_ADDRESS, ZERO_ADDRESS } from '../contracts/interfaces';
+import { BONDING_CONTRACT_ABI, BONDING_CONTRACT_ADDRESS, ERC20_ABI, ROUTER_CONTRACT_ABI, ROUTER_CONTRACT_ADDRESS, VIRTUAL_ARBITRAGE_ABI, VIRTUAL_ARBITRAGE_ADDRESS, VIRTUAL_TOKEN_ADDRESS, ZERO_ADDRESS } from '../contracts/interfaces';
 import { transactionDB, Transaction } from '../db/TransactionDB';
 import { logger } from '../utils/logger';
 
@@ -8,6 +8,7 @@ export class MonitorService {
     private wallet: ethers.Wallet;
     private bondingContract: ethers.Contract;
     private routerContract: ethers.Contract;
+    private virtualArbitrageContract: ethers.Contract;
     private blockNumber: number = 0;
 
     constructor() {
@@ -19,11 +20,16 @@ export class MonitorService {
           this.bondingContract = new ethers.Contract(
             BONDING_CONTRACT_ADDRESS,
             BONDING_CONTRACT_ABI,
-            this.wallet.connect(this.httpProvider)
+            this.httpProvider
           );
           this.routerContract = new ethers.Contract(
             ROUTER_CONTRACT_ADDRESS,
             ROUTER_CONTRACT_ABI,
+            this.httpProvider
+          );
+          this.virtualArbitrageContract = new ethers.Contract(
+            VIRTUAL_ARBITRAGE_ADDRESS,
+            VIRTUAL_ARBITRAGE_ABI,
             this.wallet.connect(this.httpProvider)
           );
       } catch (error) {
@@ -39,11 +45,16 @@ export class MonitorService {
       this.bondingContract = new ethers.Contract(
         BONDING_CONTRACT_ADDRESS,
         BONDING_CONTRACT_ABI,
-        this.wallet.connect(this.httpProvider)
+        this.httpProvider
       );
       this.routerContract = new ethers.Contract(
         ROUTER_CONTRACT_ADDRESS,
         ROUTER_CONTRACT_ABI,
+        this.httpProvider
+      );
+      this.virtualArbitrageContract = new ethers.Contract(
+        VIRTUAL_ARBITRAGE_ADDRESS,
+        VIRTUAL_ARBITRAGE_ABI,
         this.wallet.connect(this.httpProvider)
       );
     } catch (error) {
@@ -52,6 +63,9 @@ export class MonitorService {
   }
 
   async start() {
+
+    this.blockNumber = await this.httpProvider.getBlockNumber();
+    
     this.startPriceMonitoring();
 
     logger.info('======开始监听事件======');
@@ -59,32 +73,38 @@ export class MonitorService {
       try {
         const currentBlock = await this.httpProvider.getBlockNumber();
         if(currentBlock > this.blockNumber) {
+          logger.info(`轮询到区块 ${currentBlock}, 当前区块 ${this.blockNumber}`);
           this.blockNumber = currentBlock;
           const LaunchedFilter = this.bondingContract.filters.Launched();
-          const launchedEvents = await this.routerContract.queryFilter(LaunchedFilter, currentBlock, currentBlock);
+          const launchedEvents = await this.bondingContract.queryFilter(LaunchedFilter, currentBlock, currentBlock);
           for (const event of launchedEvents) {
             if (event instanceof ethers.EventLog) {
-              this.handleLaunchedEvent(event);
+              const { args } = event;
+              this.handleLaunchedEvent(args);
             }
           }
         }
       } catch(error) {
-        console.error('轮询错误:', error);
+        logger.error('轮询错误:', error);
       }
-    }, 2000)
+    }, 1000)
   }
 
   private async handleLaunchedEvent(args: any) {
-    const [tokenAddress, pairAddress] = args;
-    logger.info(`检测到新的token发射: ${tokenAddress} -> ${pairAddress}`);
     try {
+      const [tokenAddress, pairAddress] = args;
+      logger.info(`检测到新的token发射: ${tokenAddress} -> ${pairAddress}`);
       // 执行买入操作
-      const tx = await this.bondingContract.buy(ethers.parseEther('5'), tokenAddress);
+      const tx = await this.virtualArbitrageContract.buyOnVirtual(tokenAddress, ethers.parseEther('5'), {
+        gasLimit: 800000,
+        maxFeePerGas: ethers.parseUnits("0.03", "gwei"),
+        maxPriorityFeePerGas: ethers.parseUnits("0.03", "gwei")
+      });
       const receipt = await tx.wait();
       if(receipt.status === 1) {
         const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, this.httpProvider);
-        const balance = await tokenContract.balanceOf(this.wallet.address);
-        logger.info(`买入代币 ${tokenAddress} 支付Virtual: ${ethers.formatEther(ethers.parseEther('5').toString())}, 获得Token: ${ethers.formatEther(balance.toString())}`);
+        const balance = await tokenContract.balanceOf(VIRTUAL_ARBITRAGE_ADDRESS);
+        logger.info(`买入代币 ${tokenAddress} Hash: ${tx.hash}, 支付Virtual: ${ethers.formatEther(ethers.parseEther('5').toString())}, 获得Token: ${ethers.formatEther(balance.toString())}`);
         // 记录交易到数据库
         const transaction: Transaction = {
           transactionHash: tx.hash,
@@ -99,7 +119,7 @@ export class MonitorService {
       }
     } catch (error) {
       this.reconnectHttpProvider();
-      logger.error(`买入代币 ${tokenAddress} 时出错:`, error);
+      logger.error(`买入代币时出错:`, error);
     }
   }
 
@@ -121,12 +141,16 @@ export class MonitorService {
         logger.error('监控价格时出错:', error);
         this.reconnectHttpProvider();
       }
-    }, parseInt(process.env.PRICE_CHECK_INTERVAL || '3000'));
+    }, parseInt(process.env.PRICE_CHECK_INTERVAL || '4000'));
   }
 
   private async sellToken(tx: Transaction, expectSelledVirtualAmount: ethers.BigNumberish) {
     try {
-      const res = await this.bondingContract.sell(tx.purchasedToken, tx.tokenAddress);
+      const res = await this.virtualArbitrageContract.sellOnVirtual(tx.tokenAddress, tx.purchasedToken, expectSelledVirtualAmount, {
+        gasLimit: 800000,
+        maxFeePerGas: ethers.parseUnits("0.03", "gwei"),
+        maxPriorityFeePerGas: ethers.parseUnits("0.03", "gwei")
+      });
       const receipt = await res.wait();
       if(receipt.status === 1) {
         logger.info(`卖出代币 ${tx.tokenAddress} 预期获得Virtual: ${ethers.formatEther(expectSelledVirtualAmount)}, 预期利润为: ${ethers.formatEther(`${BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)}`)}`);
