@@ -8,19 +8,7 @@ dotenv.config();
 async function main() {
   try {
     // 启动监控服务
-    const monitorService = new MonitorService(
-      {
-        wsUrls: [
-          process.env.BASE_WS_RPC_URL1!,
-          process.env.BASE_WS_RPC_URL2!
-        ],
-        httpUrl: process.env.BASE_HTTP_RPC_URL!,
-        options: {
-            maxCacheSize: 1000,
-            reconnectInterval: 5000
-        }
-    }
-    );
+    const monitorService = new MonitorService();
     await monitorService.start();
     
     logger.info('监控服务已启动');
