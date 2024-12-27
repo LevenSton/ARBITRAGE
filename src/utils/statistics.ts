@@ -85,7 +85,7 @@ export async function getSoldTokensProfits(): Promise<{
       totalProfit
     };
   } catch (error) {
-    logger.error('获取已卖出代币利润统计时出错:', error);
+    console.error('获取已卖出代币利润统计时出错:', error);
     throw error;
   }
 }
@@ -110,7 +110,7 @@ export async function getHoldingTokensStatistics(): Promise<{
       totalInvestment
     };
   } catch (error) {
-    logger.error('获取持有中代币统计时出错:', error);
+    console.error('获取持有中代币统计时出错:', error);
     throw error;
   }
 }
@@ -135,17 +135,17 @@ function calculateTokenProfits(soldTransactions: Transaction[]): TokenProfit[] {
 
     // 转换为 BigNumber 进行计算
     const profit = tx.profit
-      ? ethers.BigNumber.from(tx.profit)
-      : ethers.BigNumber.from('0');
+      ? BigInt(tx.profit)
+      : BigInt(0);
 
-    tokenProfit.totalBuyAmount = ethers.BigNumber.from(tokenProfit.totalBuyAmount)
-      .add(ethers.BigNumber.from(tx.buyCostVirtualAmount))
+    tokenProfit.totalBuyAmount = BigInt(tokenProfit.totalBuyAmount)
+       + (BigInt(tx.buyCostVirtualAmount))
       .toString();
-    tokenProfit.totalSellAmount = ethers.BigNumber.from(tokenProfit.totalSellAmount)
-      .add(ethers.BigNumber.from(tx.soldVirtualAmount))
+    tokenProfit.totalSellAmount = BigInt(tokenProfit.totalSellAmount)
+      + (BigInt(tx.soldVirtualAmount!))
       .toString();
-    tokenProfit.profit = ethers.BigNumber.from(tokenProfit.profit)
-      .add(profit)
+    tokenProfit.profit = BigInt(tokenProfit.profit)
+      + (profit)
       .toString();
     tokenProfit.transactions += 1;
 
@@ -157,8 +157,8 @@ function calculateTokenProfits(soldTransactions: Transaction[]): TokenProfit[] {
 
 function calculateTotalProfit(tokenProfits: TokenProfit[]): string {
   return tokenProfits.reduce(
-    (total, token) => total.add(ethers.BigNumber.from(token.profit)),
-    ethers.BigNumber.from(0)
+    (total, token) => total + BigInt(token.profit),
+    BigInt(0)
   ).toString();
 }
 
@@ -173,14 +173,14 @@ function formatHoldingRecords(holdingTransactions: Transaction[]): HoldingRecord
 
 function calculateTotalInvestment(holdingTransactions: Transaction[]): string {
   return holdingTransactions.reduce(
-    (total, tx) => total.add(ethers.BigNumber.from(tx.buyCostVirtualAmount)),
-    ethers.BigNumber.from(0)
+    (total, tx) => total + BigInt(tx.buyCostVirtualAmount),
+    BigInt(0)
   ).toString();
 }
 
 // 格式化工具函数
 export function formatEther(value: string): string {
-  return ethers.utils.formatEther(value);
+  return ethers.formatEther(value);
 }
 
 export function formatTimestamp(timestamp: string): string {
@@ -191,15 +191,21 @@ export function formatTimestamp(timestamp: string): string {
 
 async function main() {
   try {
+    // 确保数据库已初始化
+    await transactionDB.init();
+    
     const txs = await getAllTransactions();
-    logger.info('所有交易记录:', { transactions: txs });
+    console.log('所有交易记录:', { transactions: txs });
   } catch (error) {
-    logger.error('获取交易记录时出错:', error);
+    console.error('获取交易记录时出错:', error);
     process.exit(1);
+  } finally {
+    // 确保在程序结束时关闭数据库连接
+    await transactionDB.close();
   }
 }
 
 main().catch(error => {
-  logger.error('执行统计程序时出错:', error);
+  console.error('执行统计程序时出错:', error);
   process.exit(1);
 });

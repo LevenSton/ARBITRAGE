@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "dotenv": "^16.3.1",
-    "ethers": "^5.7.2",
+    "ethers": "^6.9.1",
     "level": "^8.0.0",
     "winston": "^3.11.0"
   },

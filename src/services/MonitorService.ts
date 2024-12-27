@@ -4,8 +4,7 @@ import { transactionDB, Transaction } from '../db/TransactionDB';
 import { logger } from '../utils/logger';
 
 export class MonitorService {
-  private httpProvider: ethers.providers.JsonRpcProvider | null;
-  private wsProvider: ethers.providers.WebSocketProvider | null;
+  private httpProvider: ethers.JsonRpcProvider | null;
   private wallet: ethers.Wallet | null;
   private targetContract: ethers.Contract | null;
   private routerContract: ethers.Contract | null;
@@ -15,44 +14,32 @@ export class MonitorService {
   private retryCount = 0;
   private maxRetries = 5;
   private retryDelay = 5000;
+  private lastestBlockNumber = 0;
 
   constructor() {
     this.httpProvider = null;
     this.wallet = null;
     this.targetContract = null;
     this.routerContract = null;
-    this.wsProvider = null;
     this.wsContract = null;
   }
 
   async initialize() {
     try {
-        this.httpProvider = new ethers.providers.JsonRpcProvider(process.env.BASE_HTTP_RPC_URL!);
-        this.wsProvider = new ethers.providers.WebSocketProvider(process.env.BASE_WS_RPC_URL!);
-        this.wsProvider._websocket.on('close', async () => {
-          logger.error('WebSocket disconnected');
-          await this.handleDisconnection();
-        });
-        
+        this.httpProvider = new ethers.JsonRpcProvider(process.env.BASE_HTTP_RPC_URL!);
         this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, this.httpProvider);
         this.targetContract = new ethers.Contract(
           process.env.BONDING_CONTRACT!,
           BONDING_CONTRACT_ABI,
           this.wallet
         );
-    
         this.routerContract = new ethers.Contract(
           process.env.ROUTER_CONTRACT!,
           ROUTER_CONTRACT_ABI,
           this.wallet
         );
-
-        this.wsContract = new ethers.Contract(
-          process.env.BONDING_CONTRACT!,
-          BONDING_CONTRACT_ABI,
-          this.wsProvider
-        );
         this.retryCount = 0;
+        this.lastestBlockNumber = await this.httpProvider.getBlockNumber();
         return true;
     } catch (error) {
         logger.error('初始化失败:', error);
@@ -70,19 +57,13 @@ export class MonitorService {
 
     try {
       // 监听 Launched 事件
-      this.wsContract!.on('Launched', async (token: string, pair: string, amount: ethers.BigNumber) => {
+      this.wsContract!.on('Launched', async (token: string, pair: string, amount: ethers.BigNumberish) => {
         try {
           await this.handleLaunchedEvent({ token, pair, amount });
         } catch (error) {
           logger.error('处理 Launched 事件时出错:', error);
         }
       });
-
-      this.wsProvider!.on('error', async (error) => {
-        logger.error('WS Error:', error);
-        // 重连逻辑
-        await this.handleDisconnection();
-    });
     } catch (error) {
       logger.error('监听 Launched 事件时出错:', error);
       await this.handleDisconnection();
@@ -104,12 +85,6 @@ export class MonitorService {
     logger.info(`尝试重新连接... (第 ${this.retryCount + 1}/${this.maxRetries} 次)`);
     
     try {
-      // 移除所有现有的监听器
-      this.wsContract!.removeAllListeners('Launched');
-      this.wsProvider!.removeAllListeners();
-      const wsProvider = this.wsProvider as ethers.providers.WebSocketProvider;
-      wsProvider._websocket.close();
-
       // 延迟重试
       await new Promise(resolve => setTimeout(resolve, this.retryDelay));
       // 重新初始化连接
@@ -135,12 +110,12 @@ export class MonitorService {
 
     try {
       // 执行买入操作
-      const buyAmount = ethers.utils.parseEther('5'); // 设置买入金额
+      const buyAmount = ethers.parseEther('5'); // 设置买入金额
       const outAmount = await this.routerContract!.getAmountsOut(tokenAddress, VIRTUAL_TOKEN_ADDRESS, buyAmount);
       this.id ++; 
       // const tx = await this.targetContract.buy(buyAmount, tokenAddress);
       // const receipt = await tx.wait();
-      logger.info(`买入代币 ${tokenAddress} 支付Virtual: ${ethers.utils.formatEther(buyAmount.toString())}, 获得Token: ${ethers.utils.formatEther(outAmount.toString())}`);
+      logger.info(`买入代币 ${tokenAddress} 支付Virtual: ${ethers.formatEther(buyAmount.toString())}, 获得Token: ${ethers.formatEther(outAmount.toString())}`);
 
       // 记录交易到数据库
       const transaction: Transaction = {
@@ -166,9 +141,9 @@ export class MonitorService {
 
         for (const tx of boughtTransactions) {
           const selledVirtualAmount = await this.routerContract!.getAmountsOut(tx.tokenAddress, ZERO_ADDRESS, tx.purchasedToken);
-          const buyAmount = ethers.BigNumber.from(tx.buyCostVirtualAmount);
+          const buyAmount = BigInt(tx.buyCostVirtualAmount);
 
-          if (selledVirtualAmount.gte(buyAmount.mul(15).div(10))) {
+          if (selledVirtualAmount > (buyAmount * BigInt(15) / BigInt(10))) {
             await this.sellToken(tx, selledVirtualAmount);
           }
         }
@@ -178,18 +153,18 @@ export class MonitorService {
     }, parseInt(process.env.PRICE_CHECK_INTERVAL || '3000'));
   }
 
-  private async sellToken(tx: Transaction, expectSelledVirtualAmount: ethers.BigNumber) {
+  private async sellToken(tx: Transaction, expectSelledVirtualAmount: ethers.BigNumberish) {
     try {
       // const tx = await this.targetContract.buy(buyAmount, tokenAddress);
       // const receipt = await tx.wait();
 
-      logger.info(`卖出代币 ${tx.tokenAddress} 获得Virtual: ${ethers.utils.formatEther(expectSelledVirtualAmount.toString())}, 利润为: ${ethers.utils.formatEther(expectSelledVirtualAmount.sub(ethers.BigNumber.from(tx.buyCostVirtualAmount)).toString())}`);
+      logger.info(`卖出代币 ${tx.tokenAddress} 获得Virtual: ${ethers.formatEther(expectSelledVirtualAmount)}, 利润为: ${ethers.formatEther(`${BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)}`)}`);
 
       // 更新交易记录
       const updates: Partial<Transaction> = {
         sellTime: new Date().toISOString(),
         soldVirtualAmount: expectSelledVirtualAmount.toString(),
-        profit: expectSelledVirtualAmount.sub(ethers.BigNumber.from(tx.buyCostVirtualAmount)).toString(),
+        profit: (BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)).toString(),
         status: 'SOLD'
       };
 
@@ -201,13 +176,6 @@ export class MonitorService {
   }
 
   async stop() {
-    if (this.wsContract) {
-      this.wsContract.removeAllListeners('Launched');
-    }
-    if (this.wsProvider) {
-      this.wsProvider.removeAllListeners('error');
-      this.wsProvider.removeAllListeners();
-    }
     this.isListening = false;
     logger.info('已停止监听事件');
   }

@@ -109,9 +109,22 @@ class TransactionDB {
   public async getAllTransactions(): Promise<Transaction[]> {
     const transactions: Transaction[] = [];
     try {
-      for await (const [key, value] of this.db.iterator()) {
-        transactions.push(value);
+      // 确保数据库已初始化
+      if (!this.isInitialized) {
+        await this.init();
       }
+
+      // 使用新的迭代器
+      const iterator = this.db.iterator();
+      try {
+        for await (const [key, value] of iterator) {
+          transactions.push(value);
+        }
+      } finally {
+        // 确保迭代器被正确关闭
+        await iterator.close();
+      }
+      
       return transactions;
     } catch (error) {
       logger.error('获取所有交易记录时出错:', error);
@@ -122,11 +135,24 @@ class TransactionDB {
   public async getAllBoughtTransactions(): Promise<Transaction[]> {
     const transactions: Transaction[] = [];
     try {
-      for await (const [key, value] of this.db.iterator()) {
-        if (value.status === 'BOUGHT') {
-          transactions.push(value);
-        }
+      // 确保数据库已初始化
+      if (!this.isInitialized) {
+        await this.init();
       }
+
+      // 使用新的迭代器
+      const iterator = this.db.iterator();
+      try {
+        for await (const [key, value] of iterator) {
+          if (value.status === 'BOUGHT') {
+            transactions.push(value);
+          }
+        }
+      } finally {
+        // 确保迭代器被正确关闭
+        await iterator.close();
+      }
+      
       return transactions;
     } catch (error) {
       logger.error('获取已买入交易记录时出错:', error);
