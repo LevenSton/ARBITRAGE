@@ -1,37 +1,24 @@
 import { ethers } from 'ethers';
-import { BONDING_CONTRACT_ABI, BONDING_CONTRACT_ADDRESS, ERC20_ABI, ROUTER_CONTRACT_ABI, ROUTER_CONTRACT_ADDRESS, VIRTUAL_ARBITRAGE_ABI, VIRTUAL_ARBITRAGE_ADDRESS, VIRTUAL_TOKEN_ADDRESS, ZERO_ADDRESS } from '../contracts/interfaces';
-import { transactionDB, Transaction } from '../db/TransactionDB';
+import { BONDING_CONTRACT_ABI, BONDING_CONTRACT_ADDRESS, ERC20_ABI } from '../contracts/interfaces';
 import { logger } from '../utils/logger';
+import * as fs from "fs";
 
 export class MonitorService {
     private httpProvider: ethers.JsonRpcProvider;
-    private wallet: ethers.Wallet;
+    private privateKeys: string[] = [];
     private bondingContract: ethers.Contract;
-    private routerContract: ethers.Contract;
-    private virtualArbitrageContract: ethers.Contract;
     private blockNumber: number = 0;
-    private onSell: boolean = false;
 
     constructor() {
       try {
           // 初始化 HTTP provider 作为备份
           this.httpProvider = new ethers.JsonRpcProvider(process.env.BASE_HTTP_RPC_URL!);
-          this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY!);
+          this.privateKeys = JSON.parse(fs.readFileSync('./.keys.json', "utf-8"));
           // 初始化合约
           this.bondingContract = new ethers.Contract(
             BONDING_CONTRACT_ADDRESS,
             BONDING_CONTRACT_ABI,
             this.httpProvider
-          );
-          this.routerContract = new ethers.Contract(
-            ROUTER_CONTRACT_ADDRESS,
-            ROUTER_CONTRACT_ABI,
-            this.httpProvider
-          );
-          this.virtualArbitrageContract = new ethers.Contract(
-            VIRTUAL_ARBITRAGE_ADDRESS,
-            VIRTUAL_ARBITRAGE_ABI,
-            this.wallet.connect(this.httpProvider)
           );
       } catch (error) {
           logger.error('初始化 provider 失败:', error);
@@ -42,21 +29,10 @@ export class MonitorService {
   private async reconnectHttpProvider() {
     try {
       this.httpProvider = new ethers.JsonRpcProvider(process.env.BASE_HTTP_RPC_URL!);
-      this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY!);
       this.bondingContract = new ethers.Contract(
         BONDING_CONTRACT_ADDRESS,
         BONDING_CONTRACT_ABI,
         this.httpProvider
-      );
-      this.routerContract = new ethers.Contract(
-        ROUTER_CONTRACT_ADDRESS,
-        ROUTER_CONTRACT_ABI,
-        this.httpProvider
-      );
-      this.virtualArbitrageContract = new ethers.Contract(
-        VIRTUAL_ARBITRAGE_ADDRESS,
-        VIRTUAL_ARBITRAGE_ABI,
-        this.wallet.connect(this.httpProvider)
       );
     } catch (error) {
       logger.error('重新连接 provider 失败:', error);
@@ -66,8 +42,6 @@ export class MonitorService {
   async start() {
 
     this.blockNumber = await this.httpProvider.getBlockNumber();
-    
-    this.startPriceMonitoring();
 
     logger.info('======开始监听事件======');
     setInterval(async () => {
@@ -95,86 +69,31 @@ export class MonitorService {
     try {
       const [tokenAddress, pairAddress] = args;
       logger.info(`检测到新的token发射: ${tokenAddress} -> ${pairAddress}`);
-      // 执行买入操作
-      const tx = await this.virtualArbitrageContract.buyOnVirtual(tokenAddress, ethers.parseEther('5'), {
-        gasLimit: 800000,
-        maxFeePerGas: ethers.parseUnits("0.03", "gwei"),
-        maxPriorityFeePerGas: ethers.parseUnits("0.03", "gwei")
-      });
-      const receipt = await tx.wait();
-      if(receipt.status === 1) {
-        const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, this.httpProvider);
-        const balance = await tokenContract.balanceOf(VIRTUAL_ARBITRAGE_ADDRESS);
-        logger.info(`买入代币 ${tokenAddress} Hash: ${tx.hash}, 支付Virtual: ${ethers.formatEther(ethers.parseEther('5').toString())}, 获得Token: ${ethers.formatEther(balance.toString())}`);
-        // 记录交易到数据库
-        const transaction: Transaction = {
-          transactionHash: tx.hash,
-          tokenAddress,
-          pairAddress,
-          buyCostVirtualAmount: ethers.parseEther('5').toString(),
-          purchasedToken: balance.toString(),
-          buyTime: new Date().toISOString(),
-          status: 'BOUGHT'
-        };
-        await transactionDB.saveTransaction(transaction);
+      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, this.httpProvider);
+      const name = await tokenContract.name();
+      const symbol = await tokenContract.symbol();
+      console.log(`token ${name}(${symbol}) 已发射`);
+      const lowerSymbol = symbol.toLowerCase();
+      if(lowerSymbol.startsWith('actualz')) {
+        logger.info(`==========准备买入代币========== ${tokenAddress} - ${name} ${symbol}`);
+
+        const buyPromises = this.privateKeys.map(async (privateKey) => {
+          const wallet = new ethers.Wallet(privateKey, this.httpProvider);
+          const contract = new ethers.Contract(BONDING_CONTRACT_ADDRESS, BONDING_CONTRACT_ABI, wallet);
+          const tx = await contract.buy(ethers.parseEther('5'), tokenAddress, {
+            gasLimit: 800000,
+            maxFeePerGas: ethers.parseUnits("0.03", "gwei"),
+            maxPriorityFeePerGas: ethers.parseUnits("0.03", "gwei")
+          });
+          await tx.wait();
+        });
+        await Promise.all(buyPromises);
+        
+        return;
       }
     } catch (error) {
       this.reconnectHttpProvider();
       logger.error(`买入代币时出错:`, error);
-    }
-  }
-
-  private async startPriceMonitoring() {
-    logger.info('======开始价格监控======');
-    setInterval(async () => {
-      try {
-        const boughtTransactions = await transactionDB.getAllBoughtTransactions();
-
-        for (const tx of boughtTransactions) {
-          const selledVirtualAmount = await this.routerContract!.getAmountsOut(tx.tokenAddress, ZERO_ADDRESS, tx.purchasedToken);
-          const buyAmount = BigInt(tx.buyCostVirtualAmount);
-
-          if (selledVirtualAmount > (buyAmount * BigInt(15) / BigInt(10))) {
-            await this.sellToken(tx, selledVirtualAmount);
-          }
-        }
-      } catch (error) {
-        logger.error('监控价格时出错:', error);
-        this.reconnectHttpProvider();
-      }
-    }, parseInt(process.env.PRICE_CHECK_INTERVAL || '4000'));
-  }
-
-  private async sellToken(tx: Transaction, expectSelledVirtualAmount: ethers.BigNumberish) {
-    try {
-      if(this.onSell) return logger.info('已经在卖出中,请不要重复操作');
-      
-      this.onSell = true;
-      // 执行卖出操作
-      const res = await this.virtualArbitrageContract.sellOnVirtual(tx.tokenAddress, tx.purchasedToken, expectSelledVirtualAmount, {
-        gasLimit: 800000,
-        maxFeePerGas: ethers.parseUnits("0.03", "gwei"),
-        maxPriorityFeePerGas: ethers.parseUnits("0.03", "gwei")
-      });
-      const receipt = await res.wait();
-      if(receipt.status === 1) {
-        logger.info(`卖出代币 ${tx.tokenAddress} 预期获得Virtual: ${ethers.formatEther(expectSelledVirtualAmount)}, 预期利润为: ${ethers.formatEther(`${BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)}`)}`);
-        // 更新交易记录
-        this.onSell = false;
-        const updates: Partial<Transaction> = {
-          sellHash: res.hash,
-          sellTime: new Date().toISOString(),
-          soldVirtualAmount: expectSelledVirtualAmount.toString(),
-          profit: (BigInt(expectSelledVirtualAmount) - BigInt(tx.buyCostVirtualAmount)).toString(),
-          status: 'SOLD'
-        };
-        await transactionDB.updateTransaction(tx.transactionHash, updates);
-        logger.info(`成功卖出代币 ${tx.tokenAddress}`);
-      }
-    } catch (error) {
-      this.onSell = false;
-      this.reconnectHttpProvider();
-      logger.error(`卖出代币 ${tx.tokenAddress} 时出错:`, error);
     }
   }
 
