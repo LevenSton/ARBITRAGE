@@ -6,3 +6,4 @@ dist
 package-lock.json
 data
 logs
+.keys.json

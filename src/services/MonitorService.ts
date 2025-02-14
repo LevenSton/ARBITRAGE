@@ -74,9 +74,8 @@ export class MonitorService {
       const symbol = await tokenContract.symbol();
       console.log(`token ${name}(${symbol}) 已发射`);
       const lowerSymbol = symbol.toLowerCase();
-      if(lowerSymbol.startsWith('actualz')) {
+      if(lowerSymbol == 'mbb') {
         logger.info(`==========准备买入代币========== ${tokenAddress} - ${name} ${symbol}`);
-
         const buyPromises = this.privateKeys.map(async (privateKey) => {
           const wallet = new ethers.Wallet(privateKey, this.httpProvider);
           const contract = new ethers.Contract(BONDING_CONTRACT_ADDRESS, BONDING_CONTRACT_ABI, wallet);
